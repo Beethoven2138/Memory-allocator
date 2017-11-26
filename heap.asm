@@ -1,3 +1,7 @@
+;AUTHOR: SAXON SUPPLE
+;LICENSE: GPL v3
+;USERSPACE MEMORY ALLOCATOR USING BUDY ALLOCATION ALGORITHM
+
 ;RDI, RSI, RDX, RCX
 
 STRUC list_head
@@ -13,7 +17,7 @@ STRUC block
 	.size: RESQ 1
 ENDSTRUC
 
-;Describes a memory block size. Holds linked list of free blocks. sizeof() == 
+;Describes a memory block size.
 STRUC block_list
 	.head: RESQ 1
 	.tail: RESQ 1
@@ -25,6 +29,8 @@ section .text
 	global free_heap
 	global inc_heap
 	global malloc
+	global calloc
+	global realloc
 	global free
 	global _memmove
 	global _memcpy
@@ -35,7 +41,7 @@ section .text
 	global _round_size
 	global _log2
 	global _find_normal
-	
+
 BLOCK_TYPES:	EQU 15		;2^0 - 2^14
 BLOCK_SIZE:	EQU 32		;in bytes
 BLOCK_LIST_SIZE:	EQU 24
@@ -139,9 +145,67 @@ malloc:
 	MOV RAX, [RCX + block.addr]
 	RET
 
+;void *calloc(size_t nmemb, size_t size);
+calloc:
+	CMP RDI, 0
+	JE _calloc_exit_fail
+	CMP RSI, 0
+	JE _calloc_exit_fail
+	MOV RAX, RSI
+	MUL RDI
+	MOV RDI, RAX
+	CALL malloc
+	JMP _calloc_exit
+_calloc_exit_fail:
+	XOR RAX, RAX
+_calloc_exit:
+	RET
+
+;void *realloc(void *ptr, size_t size);
+realloc:
+	CMP RDI, 0
+	JE _case1
+	CMP RSI, 0
+	JE _case2
+	MOV RCX, 1
+	MOV RBX, block_region_addr
+_realloc_loop:
+	CMP RCX, [block_count]
+	JG _realloc_exit
+	CMP [RBX + block.addr], RDI
+	JE _realloc_found
+	ADD RBX, BLOCK_SIZE
+	INC RCX
+	JMP _realloc_loop
+_realloc_found:
+	SUB RSP, [RBX + block.size]
+	MOV RSI, RDI
+	MOV RDI, RSP
+	MOV RDX, [RBX + block.size]
+	CALL _memcpy
+	MOV RDI, [RBX + block.addr]
+	CALL free
+	MOV RDI, [RBX + block.size]
+	CALL malloc
+	MOV R12, RAX
+	MOV RDI, RAX
+	MOV RSI, RSP
+	MOV RDX, [RBX + block.size]
+	CALL _memcpy
+	MOV RAX, R12
+	JMP _realloc_exit
+_case1:
+	MOV RDI, RSI
+	CALL malloc
+	JMP _realloc_exit
+_case2:
+	CALL free
+_realloc_exit:
+	RET
+
 free:
 	MOV RDX, block_region_addr
-	XOR MOV RCX, 1
+	MOV RCX, 1
 _free_loop:
 	CMP RCX, [block_count]
 	JG _free_exit
@@ -149,7 +213,7 @@ _free_loop:
 	JE _found
 	ADD RDX, BLOCK_SIZE
 	INC RCX
-	JMP _free_loop	
+	JMP _free_loop
 _found:
 	MOV RDI, [RDX + block.size]
 	CALL _log2
@@ -325,9 +389,9 @@ list_del:
 	CMP RCX, 0
 	JE _next
 	MOV [RCX + list_head.prev], RAX
-_next:	
+_next:
 	CMP RAX, 0
 	JE _exit
 	MOV [RAX + list_head.next], RCX
-_exit:	
+_exit:
 	RET

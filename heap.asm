@@ -131,6 +131,10 @@ _find_normal:
 	MOV RAX, [RCX + block_list.head]
 	MOV RDX, [RAX + list_head.next]
 	MOV [RCX + block_list.head], RDX
+	PUSH RAX
+	MOV RDI, RAX
+	CALL list_del
+	POP RAX
 	SUB RAX, 8
 	RET
 

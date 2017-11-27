@@ -236,12 +236,9 @@ _free_exit:
 ;returns -1 on failure, size of heap on success
 ;start with one block of size 2^14. Reserve region for allocating more blocks
 init_heap:
-	RET
 	LEA RDI, [block_lists + 360 - BLOCK_LIST_SIZE]
 	MOV QWORD [RDI + block_list.size], 16384
-	RET
 	CALL alloc_block
-	RET
 	CMP RAX, 0
 	JE _INIT_HEAP_EXIT
 	MOV QWORD [RDI + block_list.head], RAX

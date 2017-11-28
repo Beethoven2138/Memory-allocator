@@ -19,19 +19,21 @@ ENDSTRUC
 
 ;Describes a memory block size.
 STRUC block_list
-	.head: RESQ 1
+	.head: RESQ 1		;points to list entry of struct block
 	.tail: RESQ 1
 	.size: RESQ 1
 ENDSTRUC
 
 section .text
+	global _start
+	
 	global init_heap
 	global free_heap
 	global inc_heap
-	global malloc
-	global calloc
-	global realloc
-	global free
+	global asm_malloc
+	global asm_calloc
+	global asm_realloc
+	global asm_free
 	global _memmove
 	global _memcpy
 
@@ -41,6 +43,7 @@ section .text
 	global _round_size
 	global _log2
 	global _find_normal
+	global _find_free_block
 
 BLOCK_TYPES:	EQU 15		;2^0 - 2^14
 BLOCK_SIZE:	EQU 32		;in bytes
@@ -57,6 +60,15 @@ section .data
 	block_count DQ 0
 	heap_size DQ 16384
 
+_start:
+	CALL init_heap
+	MOV RDI, 12
+	CALL _find_free_block
+_success:
+	MOV RAX, 60
+	MOV RDI, 0
+	SYSCALL
+	
 ;block* alloc_block(void);returns address of block
 alloc_block:
 	MOV RAX, [block_count]
@@ -99,30 +111,38 @@ _find_free_block:
 	MOV RCX, BLOCK_LIST_SIZE
 	MOV RAX, RDI
 	MUL RCX
-	MOV RCX, RAX
-	ADD RCX, block_lists
+	MOV RCX, RAX		;RCX = size * sizeof(BLOCK_LIST)
+	ADD RCX, block_lists	;RCX += &block_lists
 	CMP QWORD [RCX + block_list.head], 0
 	JNE _find_normal
 	INC RDI
 	PUSH RCX
 	CALL _find_free_block
+	CMP RAX, 0
+	JE _f_exit_fail
 	ADD RAX, 8
 	MOV RDI, RAX
-	CALL list_del
 	MOV RDX, [RDI + block.size]
 	SHR RDX, 1
 	MOV [RDI + block.size], RDX
 	CALL alloc_block
 	MOV [RAX + block.size], RDX
-	MOV R14, [RDI + block.addr]
-	ADD RDX, R14
+	ADD RDX, QWORD [RDI + block.addr]
 	MOV [RAX + block.addr], RDX
 	POP RCX
-	PUSH RDI
-	MOV RSI, [RCX + block_list.head]
+
+	ADD RDI, 8
+	MOV QWORD [RDI], 0
+	MOV QWORD [RDI + 8], 0
+	MOV [RCX + block_list.head], RDI
+	MOV [RCX + block_list.tail], RDI
+
+	MOV RSI, RDI
+	SUB RDI, 8
+
+	;; HERE'S WHERE THE PROBLEM WAS!!!
+	;; THE NEW LIST DIDN'T HAVE A HEAD INITIALIZED!!!
 	MOV RDI, RAX
-	CALL list_add
-	POP RDI
 	CALL list_add
 	SUB RDI, 8
 	MOV RAX, RDI
@@ -137,9 +157,12 @@ _find_normal:
 	POP RAX
 	SUB RAX, 8
 	RET
+_f_exit_fail:
+	XOR RAX, RAX
+	RET
 
 ;void *malloc(unsigned int size);
-malloc:
+asm_malloc:
 	CALL _round_size
 	MOV RDI, RAX
 	CALL _log2
@@ -150,7 +173,7 @@ malloc:
 	RET
 
 ;void *calloc(size_t nmemb, size_t size);
-calloc:
+asm_calloc:
 	CMP RDI, 0
 	JE _calloc_exit_fail
 	CMP RSI, 0
@@ -158,7 +181,7 @@ calloc:
 	MOV RAX, RSI
 	MUL RDI
 	MOV RDI, RAX
-	CALL malloc
+	CALL asm_malloc
 	JMP _calloc_exit
 _calloc_exit_fail:
 	XOR RAX, RAX
@@ -166,7 +189,7 @@ _calloc_exit:
 	RET
 
 ;void *realloc(void *ptr, size_t size);
-realloc:
+asm_realloc:
 	CMP RDI, 0
 	JE _case1
 	CMP RSI, 0
@@ -188,9 +211,9 @@ _realloc_found:
 	MOV RDX, [RBX + block.size]
 	CALL _memcpy
 	MOV RDI, [RBX + block.addr]
-	CALL free
+	CALL asm_free
 	MOV RDI, [RBX + block.size]
-	CALL malloc
+	CALL asm_malloc
 	MOV R12, RAX
 	MOV RDI, RAX
 	MOV RSI, RSP
@@ -200,14 +223,14 @@ _realloc_found:
 	JMP _realloc_exit
 _case1:
 	MOV RDI, RSI
-	CALL malloc
+	CALL asm_malloc
 	JMP _realloc_exit
 _case2:
-	CALL free
+	CALL asm_free
 _realloc_exit:
 	RET
 
-free:
+asm_free:
 	MOV RDX, block_region_addr
 	MOV RCX, 1
 _free_loop:
@@ -238,17 +261,21 @@ _free_exit:
 init_heap:
 	LEA RDI, [block_lists + 360 - BLOCK_LIST_SIZE]
 	MOV QWORD [RDI + block_list.size], 16384
+	PUSH RDI
 	CALL alloc_block
+	POP RDI
 	CMP RAX, 0
-	JE _INIT_HEAP_EXIT
+	JE _init_heap_exit
 	MOV QWORD [RDI + block_list.head], RAX
+	ADD RAX, 8
 	MOV QWORD [RDI + block_list.tail], RAX
+	SUB RAX, 8
 	MOV QWORD [RAX + block.size], 16384
-	MOV RCX, [heap_start]
+	MOV RCX, heap_start
 	MOV QWORD [RAX + block.addr], RCX
 	MOV QWORD [RAX + block.list], 0
 	MOV QWORD [RAX + block.list + 8], 0
-_INIT_HEAP_EXIT:
+_init_heap_exit:
 	RET
 
 free_heap:
